@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gin Rummy Score Keeper</title>
-<script src="qrcode.min.js"></script>
+<script src="js/qrcode.min.js"></script>
 <style>
 body { font-family: Arial, sans-serif; margin:5px; padding:5px; background:#f4f4f9; text-align:center;}
 h1 { font-size:1.2em; margin-bottom:5px; }
@@ -225,7 +225,7 @@ function resetGame(){
   saveState();  // persist reset
 }
 
-let qrShown=true;
+let qrShown=false;
 function toggleQR(){
   const container=document.getElementById('qr-container');
   if(!qrShown){
