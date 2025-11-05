@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gin Rummy Score Keeper</title>
+<script src="qrcode.min.js"></script>
+<style>
+body { font-family: Arial, sans-serif; margin:5px; padding:5px; background:#f4f4f9; text-align:center;}
+h1 { font-size:1.2em; margin-bottom:5px; }
+
+table { width:100%; border-collapse: collapse; font-size:0.85em; margin-bottom:10px; table-layout:fixed; }
+th, td { border:1px solid #aaa; padding:4px; text-align:center; overflow:hidden; }
+th:nth-child(1), td:nth-child(1) { width:40px; }
+th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { width:calc(50% - 20px); }
+
+input[type="number"], input[type="text"] { font-size:1.4em; text-align:center; }
+input[type="checkbox"], input[type="radio"] { width:18px; height:18px; }
+
+.hand-container { display:flex; align-items:flex-start; margin-bottom:5px; gap:5px; }
+#handScore {
+  width:50px;
+  height: 60px; /* exactly two 30px rows */
+  font-size:1.4em;
+  text-align:center;
+  line-height:60px; /* vertically center number */
+}
+
+.player-column { display:flex; flex-direction:column; justify-content:space-between; }
+.player-label { display:flex; align-items:center; gap:4px; justify-content:flex-start; min-width:60px; height:30px; }
+
+.selector-column {
+  display:grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  column-gap:5px;
+  row-gap:5px;
+}
+.selector-column label { display:flex; align-items:center; gap:2px; justify-content:flex-start; height:30px; }
+.selector-column .empty { visibility:hidden; }
+
+.buttons { display:flex; justify-content:space-between; margin-top:5px; }
+button { font-size:0.9em; padding:8px 14px; }
+#reset-btn { font-size:0.8em; padding:4px 8px; margin-top:5px; }
+#qr-container { margin-top:5px; display:none;}
+</style>
+</head>
+<body>
+<h1>Gin Rummy Score Keeper</h1>
+
+<table id="score-table">
+  <thead>
+    <tr>
+      <th>Round</th>
+      <th contenteditable="true" id="p1name">P1</th>
+      <th contenteditable="true" id="p2name">P2</th>
+    </tr>
+  </thead>
+  <tbody id="score-body"></tbody>
+</table>
+
+<div class="hand-container">
+  <!-- Score input -->
+  <input type="number" id="handScore" placeholder="--">
+
+  <div class="player-column">
+    <div class="player-label"><input type="radio" name="activePlayer" value="0" checked><span id="p1label">P1</span></div>
+    <div class="player-label"><input type="radio" name="activePlayer" value="1"><span id="p2label">P2</span></div>
+  </div>
+
+  <div class="selector-column">
+    <label><input type="checkbox" class="scoreOpt" id="gin">Gin</label>
+    <label><input type="checkbox" class="scoreOpt" id="biggin">Big</label>
+    <label><input type="checkbox" class="scoreOpt" id="fail">Fail</label>
+    <div class="empty"></div>
+  </div>
+</div>
+
+<div class="buttons">
+  <button style="flex:1;margin-right:4px;" onclick="addHand()">Add Hand</button>
+  <button style="flex:1;margin-left:4px;" onclick="undoHand()">Undo</button>
+</div>
+
+<button id="reset-btn" onclick="resetGame()">Reset</button>
+
+<div style="margin-top:5px;">
+  <button onclick="toggleQR()">▼ QR ▼</button>
+  <div id="qr-container"></div>
+</div>
+
+<script>
+let scores=[[],[]];
+let history=[];
+
+// Sync player selector labels with scoreboard names
+function updatePlayerLabels() {
+  document.getElementById('p1label').textContent = document.getElementById('p1name').textContent || 'P1';
+  document.getElementById('p2label').textContent = document.getElementById('p2name').textContent || 'P2';
+}
+document.getElementById('p1name').addEventListener('input', ()=>{
+  updatePlayerLabels();
+  saveState();
+});
+document.getElementById('p2name').addEventListener('input', ()=>{
+  updatePlayerLabels();
+  saveState();
+});
+updatePlayerLabels();
+
+const checkboxes = document.querySelectorAll('.scoreOpt');
+checkboxes.forEach(cb=>{
+  cb.addEventListener('change',()=>{
+    if(cb.checked){
+      checkboxes.forEach(other=>{
+        if(other!==cb) other.checked=false;
+      });
+    }
+  });
+});
+
+// === persistence helpers ===
+function saveState() {
+  try {
+    localStorage.setItem("ginState", JSON.stringify({
+      scores,
+      history,
+      p1: document.getElementById('p1name').textContent,
+      p2: document.getElementById('p2name').textContent
+    }));
+  } catch(e) {
+    console.error("Failed to save state:", e);
+  }
+}
+
+function loadState() {
+  const data = localStorage.getItem("ginState");
+  if (!data) return;
+  try {
+    const parsed = JSON.parse(data);
+    const s = parsed.scores;
+    const h = parsed.history;
+    const p1 = parsed.p1;
+    const p2 = parsed.p2;
+
+    // Validate structure
+    if (Array.isArray(s) && s.length === 2 && (Array.isArray(h) || h === undefined)) {
+      scores = [ Array.isArray(s[0]) ? s[0].slice() : [], Array.isArray(s[1]) ? s[1].slice() : [] ];
+      // Reconstruct history if missing but scores exist so undo still works after reload
+      if (Array.isArray(h) && h.length) {
+        history = JSON.parse(JSON.stringify(h));
+      } else {
+        history = [];
+        const rounds = Math.max(scores[0].length, scores[1].length);
+        for (let r=0; r<rounds; r++) {
+          const s0 = scores[0].slice(0, r+1);
+          const s1 = scores[1].slice(0, r+1);
+          history.push({ scores: [ s0.slice(), s1.slice() ] });
+        }
+      }
+      document.getElementById('p1name').textContent = p1 || "P1";
+      document.getElementById('p2name').textContent = p2 || "P2";
+      updatePlayerLabels();
+      updateTable();
+    }
+  } catch(e) {
+    console.error("Failed to load state:", e);
+  }
+}
+
+function addHand(){
+  const active=parseInt(document.querySelector('input[name="activePlayer"]:checked').value);
+  let val=parseInt(document.getElementById('handScore').value)||0;
+
+  if(document.getElementById('gin').checked) val+=25;
+  if(document.getElementById('biggin').checked) val+=31;
+  if(document.getElementById('fail').checked) val+=25;
+
+  scores[active].push((scores[active].length>0?scores[active][scores[active].length-1]:0) + val);
+
+  const other=active===0?1:0;
+  if(scores[other].length < scores[active].length) {
+    const last= scores[other].length>0?scores[other][scores[other].length-1]:0;
+    scores[other].push(last);
+  }
+
+  history.push({scores:JSON.parse(JSON.stringify(scores))});
+  saveState();  // persist after change
+  resetInputs();
+  updateTable();
+}
+
+function resetInputs(){
+  document.getElementById('handScore').value='';
+  checkboxes.forEach(cb=>cb.checked=false);
+}
+
+function undoHand(){
+  if(history.length>0){
+    history.pop();
+    if(history.length>0) scores=JSON.parse(JSON.stringify(history[history.length-1].scores));
+    else scores=[[],[]];
+    updateTable();
+    saveState();  // persist after change
+  }
+}
+
+function updateTable(){
+  const tbody=document.getElementById('score-body');
+  tbody.innerHTML='';
+  for(let i=0;i<scores[0].length;i++){
+    tbody.innerHTML+=`<tr><td>${i+1}</td><td>${scores[0][i]}</td><td>${scores[1][i]}</td></tr>`;
+  }
+  checkWinner();
+}
+
+function checkWinner(){
+  if(scores[0].length && scores[0][scores[0].length-1]>=100) alert(`${document.getElementById('p1name').textContent} wins!`);
+  if(scores[1].length && scores[1][scores[1].length-1]>=100) alert(`${document.getElementById('p2name').textContent} wins!`);
+}
+
+function resetGame(){
+  scores=[[],[]];
+  history=[];
+  updateTable();
+  saveState();  // persist reset
+}
+
+let qrShown=false;
+function toggleQR(){
+  const container=document.getElementById('qr-container');
+  if(!qrShown){
+    container.style.display='block';
+    container.innerHTML='';
+    new QRCode(container,{text:'https://bramalama.github.io/gin-scorecard',width:128,height:128});
+    qrShown=true;
+  }else{
+    container.style.display='none';
+    container.innerHTML='';
+    qrShown=false;
+  }
+}
+
+// Restore state on load
+window.addEventListener("load", loadState);
+</script>
+</body>
+</html>
